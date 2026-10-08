@@ -1,0 +1,32 @@
+{
+  "name": "plataforma-sitios-api",
+  "version": "1.0.0",
+  "description": "API única (Express + PostgreSQL) para os sítios de aluguel — sites e painel em PHP consomem esta API",
+  "main": "server.js",
+  "scripts": {
+    "start": "nodemon server.js",
+    "migration": "npx sequelize-cli db:migrate",
+    "migration:status": "npx sequelize-cli db:migrate:status",
+    "copiar-paraiso": "node scripts/copiar-paraiso-mysql.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@vercel/functions": "^3.7.6",
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^1.20.0",
+    "cors": "^2.8.5",
+    "dotenv": "^8.6.0",
+    "express": "^4.19.2",
+    "express-validator": "^6.14.2",
+    "jsonwebtoken": "^8.5.1",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.12.0",
+    "sequelize": "^6.21.4"
+  },
+  "devDependencies": {
+    "mysql2": "^2.3.3",
+    "nodemon": "^2.0.19",
+    "sequelize-cli": "^6.4.1"
+  }
+}
