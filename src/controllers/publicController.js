@@ -96,7 +96,13 @@ class PublicController {
                  VALUES (:s, :nome, :email, :telefone, :checkin, :checkout, :hospedes, :mensagem, 'pendente')
                  RETURNING ${COLUNAS_RESERVA}`,
                 { s: sitio.id, ...f, mensagem: f.mensagem || null });
-            return res.status(201).json({ reserva: nova });
+            // O site manda os e-mails de "pedido recebido" (cliente e dono) com o mailer dele: precisa do remetente
+            // e do destino configurados no sítio (rota só para os fronts, X-Front-Key)
+            const configs = await sel(
+                `SELECT chave, valor FROM ${S}.tb_configuracoes
+                  WHERE sitio_id = :s AND chave IN ('email_remetente', 'email_notificacao', 'site_url')`, { s: sitio.id });
+            const configuracoes = Object.fromEntries(configs.map((c) => [c.chave, c.valor]));
+            return res.status(201).json({ reserva: nova, configuracoes });
         } catch (error) {
             console.error('[public.criarReserva]', error.message);
             return res.status(500).json({ message: 'Não foi possível registrar o pedido agora. Tente de novo ou fale pelo WhatsApp.' });
