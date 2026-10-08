@@ -1,5 +1,5 @@
 // Dados do 1º sítio (Paraíso na Serra do Cipó) — vieram do config.php do front PHP.
-// Usado por cadastrar-sitio-paraiso.js e copiar-paraiso-mysql.js.
+// Usado por cadastrar-sitio.js (npm run sitio -- paraiso) e copiar-paraiso-mysql.js.
 module.exports = {
     slug: 'paraiso-serra-do-cipo',
     nome: 'Paraíso na Serra do Cipó',

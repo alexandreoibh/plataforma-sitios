@@ -8,8 +8,8 @@
     "migration": "npx sequelize-cli db:migrate",
     "migration:status": "npx sequelize-cli db:migrate:status",
     "copiar-paraiso": "node scripts/copiar-paraiso-mysql.js",
-    "sitio:paraiso": "node scripts/cadastrar-sitio-paraiso.js",
-    "superadmin": "node scripts/criar-superadmin.js"
+    "superadmin": "node scripts/criar-superadmin.js",
+    "sitio": "node scripts/cadastrar-sitio.js"
   },
   "license": "UNLICENSED",
   "private": true,

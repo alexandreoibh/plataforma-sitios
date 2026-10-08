@@ -85,7 +85,7 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 
 "painel" = `auth` + `requireSitio`. Consumidor: `C:\xampp8\painel-sitios` (painel PHP único). O banco é remoto (~250 ms por consulta): junte consultas e calcule em lote. O painel recebe as reservas com as mesmas colunas do MySQL do PHP; os recebíveis do financeiro continuam calculados pelo painel (`includes/finance.php`).
 
-Scripts: `npm run superadmin` (cria/atualiza super-admin, pergunta a senha sem mostrar; `SA_NOME`/`SA_EMAIL`/`SA_SENHA` para uso não interativo), `npm run sitio:paraiso` (cadastra/atualiza o 1º sítio a partir de `scripts/dados-paraiso.js`).
+Scripts: `npm run superadmin` (cria/atualiza super-admin, pergunta a senha sem mostrar; `SA_NOME`/`SA_EMAIL`/`SA_SENHA` para uso não interativo), `npm run sitio -- <nome>` (cadastra/atualiza o sítio de `scripts/dados-<nome>.js`, ex.: `paraiso`, `kaxaprego`; configurações iniciais só se ainda não existirem).
 
 ## Variáveis de ambiente
 
