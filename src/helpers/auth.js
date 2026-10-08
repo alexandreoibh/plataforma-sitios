@@ -56,6 +56,36 @@ const auth = async (req, res, next) => {
     }
 };
 
+// Rotas do painel de um sítio: exige sítio ativo no token e confere o vínculo NO BANCO a cada chamada
+// (acesso removido/desativado vale na hora, sem esperar o token expirar). O perfil vem do banco.
+const requireSitio = async (req, res, next) => {
+    if (!req.sitio_id) return res.status(400).send({ message: 'Escolha um sítio para continuar.', code: 'SITIO_NAO_ESCOLHIDO' });
+    try {
+        // require tardio: helpers/auth é carregado antes da conexão em alguns scripts
+        const postgres = require('../database/postgres');
+        const { QueryTypes } = require('sequelize');
+        const S = postgres.SCHEMA;
+        const [sitio] = await postgres.query(`SELECT id, status FROM ${S}.tb_sitios WHERE id = :s`,
+            { replacements: { s: req.sitio_id }, type: QueryTypes.SELECT });
+        if (!sitio) return res.status(404).send({ message: 'Sítio não encontrado.' });
+        if (req.superAdmin) {
+            req.perfil = 'admin';
+            return next();
+        }
+        const [m] = await postgres.query(
+            `SELECT m.perfil FROM ${S}.tb_membros m JOIN ${S}.tb_usuarios u ON u.id = m.usuario_id
+              WHERE m.usuario_id = :u AND m.sitio_id = :s AND m.ativo AND u.ativo`,
+            { replacements: { u: req.idusuario, s: req.sitio_id }, type: QueryTypes.SELECT });
+        if (!m) return res.status(403).send({ message: 'Você não tem acesso a este sítio.', code: 'SEM_ACESSO' });
+        if (sitio.status !== 'ativo') return res.status(403).send({ message: 'Este sítio está suspenso. Fale com o suporte da plataforma.', code: 'SITIO_SUSPENSO' });
+        req.perfil = m.perfil;
+        return next();
+    } catch (error) {
+        console.error('[auth.requireSitio]', error.message);
+        return res.status(500).send({ message: 'Erro ao verificar o acesso ao sítio.' });
+    }
+};
+
 // Rotas só do administrador do sítio (ou super-admin)
 const requireAdmin = (req, res, next) => {
     if (req.superAdmin || req.perfil === 'admin') return next();
@@ -74,6 +104,7 @@ const signToken = (payload, expiresIn = '12h') => {
 };
 
 module.exports = auth;
+module.exports.requireSitio = requireSitio;
 module.exports.requireAdmin = requireAdmin;
 module.exports.requireSuperAdmin = requireSuperAdmin;
 module.exports.signToken = signToken;

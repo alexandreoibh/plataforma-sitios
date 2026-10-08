@@ -31,13 +31,17 @@ Healthcheck: `GET /api/health`. Diagnóstico do banco (versão + tabelas): `GET 
 - Colunas do `information_schema` (tipo `sql_identifier`) voltam num formato que o driver não mapeia por nome na 9.2: sempre castar (`table_name::text AS table_name`).
 - O Sequelize gera `CREATE SCHEMA IF NOT EXISTS` (só existe na 9.3+) ao preparar a `SequelizeMeta`; `src/database/config_migrations.js` substitui isso por um bloco `DO` compatível. Não remover.
 - Concorrência (ex.: duas aprovações para as mesmas datas): `pg_advisory_xact_lock(sitio_id)` dentro da transação, depois conferir conflito e gravar.
+- **Fuso:** a sessão roda em `-03:00` (Brasília, `src/database/postgres.js`), então `now()` e `current_date` já são o "hoje" das regras. `TIMESTAMP` volta como texto `'YYYY-MM-DD HH:MM:SS'` (parser 1114) e `DATE` deve ser selecionado com `::text`. No JS, use `helpers/datas.js` (`hojeBR`, `addDays`…), nunca `new Date()` para datas de negócio.
+- Regras de disponibilidade (noites ocupadas, mínimo de noites, validação de período) ficam em `helpers/regras.js`, portadas de `includes/availability.php`.
 - Queries: `postgres.query(sql, { replacements, type: QueryTypes.SELECT, transaction })`.
 
 ## Multi-sítio (isolamento)
 
 - Toda tabela de dados tem `sitio_id`. **Toda** query do painel filtra por `req.sitio_id`, que vem **sempre do token** (`helpers/auth.js`), nunca do body/query.
 - Super-admin (`tb_usuarios.super_admin`) pode operar em outro sítio pelo header `X-Sitio-Id`.
-- Perfis por sítio em `tb_membros` (`admin` | `operador`); `requireAdmin` protege financeiro, usuários e configurações.
+- Perfis por sítio em `tb_membros` (`admin` | `operador`, `ativo` por vínculo); `requireAdmin` protege financeiro, usuários e configurações.
+- Rotas do painel usam `auth` + `requireSitio`, que confere o vínculo **no banco** a cada chamada (acesso removido/desativado ou sítio suspenso valem na hora, sem esperar o token expirar) e pega o perfil de lá.
+- Usuário em mais de um sítio: o admin de um sítio só altera nome/e-mail/senha de quem é **exclusivo** dele (`services/membros.js`); o resto a própria pessoa troca.
 - Rotas públicas (site) identificam o sítio pelo `slug`.
 
 ## Tabelas (schema "s-sitios")
@@ -60,8 +64,23 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 | `GET /api/health` | público | Healthcheck |
 | `GET /api/health/db` | `X-Cron-Queue-Key` | Versão do Postgres e tabelas do schema |
 | `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min); 404 se não estiver `ativo` |
-| `POST /api/auth/login` | público | `{ email, senha }` → `{ token, usuario }` (JWT 12h com `id`, `email`, `super_admin`) |
+| `POST /api/auth/login` | público | `{ email, senha }` → `{ token, usuario, sitios, sitio }`. Com um sítio só, o token já vem nele (`sitio_id`, `perfil`); com vários (ou super-admin), `sitio` = null |
+| `POST /api/auth/sitio` | `auth` | `{ sitio_id }` → token novo no sítio escolhido |
 | `GET/POST /api/admin/sitios`, `GET/PUT /api/admin/sitios/:id` | `auth` + `requireSuperAdmin` | Cadastro de sítios (tela `admin/sitios.php` do painel PHP) |
+| `GET/POST /api/admin/sitios/:id/membros`, `PUT/DELETE /api/admin/sitios/:id/membros/:usuarioId` | `auth` + `requireSuperAdmin` | Usuários do sítio (vínculo `tb_membros`). POST com e-mail novo cria o usuário (nome + senha). DELETE remove só o vínculo; nunca deixa o sítio sem admin (409) |
+| `GET /api/painel/contexto` | painel | Usuário, identidade do sítio ativo, perfil e nº de pendentes |
+| `PUT /api/painel/perfil`, `PUT /api/painel/perfil/senha` | painel | Meus dados |
+| `GET /api/painel/reservas` | painel | `?status=a,b&q=&de=&ate=&checkout_apos=&ordem=checkin\|checkin_desc&conflito=1` → `{ reservas, contagem }` |
+| `GET /api/painel/reservas/:id` | painel | `{ reserva, conflito, outros_pendentes }` |
+| `POST /api/painel/reservas/:id/aprovar\|recusar\|cancelar` | painel | Transição de status (aprovar exige pagamento e trava o sítio) |
+| `PUT /api/painel/reservas/:id/pagamento` | painel | Pagamento de reserva aprovada |
+| `POST /api/painel/reservas/:id/recebimento` | painel + admin | `{ tipo: entrada\|saldo, data? }` (financeiro) |
+| `GET/POST /api/painel/bloqueios`, `DELETE /api/painel/bloqueios/:id` | painel | `?passados=1` ou `?de=&ate=`; cada item traz `reservas_no_periodo` |
+| `GET /api/painel/configuracoes`, `PUT …/configuracoes/gerais\|email` | painel (PUT: admin) | Chaves com os padrões do PHP; e-mail confere o DNS do remetente |
+| `GET/POST /api/painel/regras-minimo`, `DELETE …/:id` | painel (escrita: admin) | Mínimo de noites por período |
+| `GET/POST /api/painel/usuarios`, `PUT/DELETE …/:usuarioId`, `POST …/:usuarioId/senha` | painel + admin | Usuários do sítio (`services/membros.js`) |
+
+"painel" = `auth` + `requireSitio`. O painel recebe as reservas com as mesmas colunas do MySQL do PHP; os recebíveis do financeiro continuam calculados pelo painel (`includes/finance.php`).
 
 Scripts: `npm run superadmin` (cria/atualiza super-admin, pergunta a senha sem mostrar; `SA_NOME`/`SA_EMAIL`/`SA_SENHA` para uso não interativo), `npm run sitio:paraiso` (cadastra/atualiza o 1º sítio a partir de `scripts/dados-paraiso.js`).
 

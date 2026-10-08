@@ -1,5 +1,6 @@
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
+const membros = require('../services/membros');
 
 const S = postgres.SCHEMA;
 // Campos editáveis pelo super-admin (as colunas têm o mesmo nome)
@@ -62,6 +63,50 @@ class SitioAdminController {
         } catch (error) {
             return this._erro(res, error, 'atualizar');
         }
+    }
+
+    // ---- Usuários do sítio (vínculo em tb_membros; regras em services/membros.js) ----
+
+    async listarMembros(req, res) {
+        try {
+            if (!(await this._sitioExiste(req.params.id))) return res.status(404).json({ message: 'Sítio não encontrado.' });
+            return res.status(200).json(await membros.listar(Number(req.params.id)));
+        } catch (error) {
+            return this._erro(res, error, 'listarMembros');
+        }
+    }
+
+    async adicionarMembro(req, res) {
+        try {
+            if (!(await this._sitioExiste(req.params.id))) return res.status(404).json({ message: 'Sítio não encontrado.' });
+            const r = await membros.adicionar(Number(req.params.id), req.body);
+            return res.status(r.status).json(r.json);
+        } catch (error) {
+            return this._erro(res, error, 'adicionarMembro');
+        }
+    }
+
+    async alterarMembro(req, res) {
+        try {
+            const r = await membros.alterar(Number(req.params.id), Number(req.params.usuarioId), { perfil: req.body.perfil, ativo: req.body.ativo });
+            return res.status(r.status).json(r.json);
+        } catch (error) {
+            return this._erro(res, error, 'alterarMembro');
+        }
+    }
+
+    async removerMembro(req, res) {
+        try {
+            const r = await membros.remover(Number(req.params.id), Number(req.params.usuarioId));
+            return res.status(r.status).json(r.json);
+        } catch (error) {
+            return this._erro(res, error, 'removerMembro');
+        }
+    }
+
+    async _sitioExiste(id) {
+        const [s] = await postgres.query(`SELECT id FROM ${S}.tb_sitios WHERE id = :id`, { replacements: { id }, type: QueryTypes.SELECT });
+        return Boolean(s);
     }
 
     // Texto vazio vira NULL; domínios sem repetição e em minúsculas

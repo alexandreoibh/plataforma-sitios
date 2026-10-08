@@ -39,4 +39,18 @@ router.get('/:id', auth, requireSuperAdmin, regraId, validate, controller.buscar
 router.post('/', auth, requireSuperAdmin, regrasSitio, validate, controller.criar.bind(controller));
 router.put('/:id', auth, requireSuperAdmin, [...regraId, ...regrasSitio], validate, controller.atualizar.bind(controller));
 
+// Usuários do sítio (vínculo em tb_membros)
+const regraMembro = [param('usuarioId').isInt({ min: 1 }).withMessage('Usuário inválido.')];
+const regraPerfil = body('perfil').isIn(['admin', 'operador']).withMessage('Perfil: admin ou operador.');
+const regrasNovoMembro = [
+    body('email').isString().trim().isEmail().withMessage('Informe um e-mail válido.'),
+    regraPerfil,
+    opcional('nome').isString().trim().isLength({ max: 100 }).withMessage('Nome: até 100 caracteres.'),
+    opcional('senha').isString().isLength({ max: 72 }).withMessage('Senha: até 72 caracteres.'),
+];
+router.get('/:id/membros', auth, requireSuperAdmin, regraId, validate, controller.listarMembros.bind(controller));
+router.post('/:id/membros', auth, requireSuperAdmin, [...regraId, ...regrasNovoMembro], validate, controller.adicionarMembro.bind(controller));
+router.put('/:id/membros/:usuarioId', auth, requireSuperAdmin, [...regraId, ...regraMembro, regraPerfil, body('ativo').optional().isBoolean().withMessage('Ativo: true ou false.')], validate, controller.alterarMembro.bind(controller));
+router.delete('/:id/membros/:usuarioId', auth, requireSuperAdmin, [...regraId, ...regraMembro], validate, controller.removerMembro.bind(controller));
+
 module.exports = router;
