@@ -53,6 +53,18 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 - Cron: a Vercel não roda `node-cron`; tarefas são rotas protegidas por `cronQueueKeyGuard` (header `X-Cron-Queue-Key`) chamadas por um agendador externo.
 - E-mails: enviados por um endpoint PHP (`EMAIL_DISPATCH_URL` + `PUBLIC_EMAIL_DISPATCH_KEY`), como no e-Morador.
 
+## Rotas
+
+| Rota | Acesso | O que faz |
+|---|---|---|
+| `GET /api/health` | público | Healthcheck |
+| `GET /api/health/db` | `X-Cron-Queue-Key` | Versão do Postgres e tabelas do schema |
+| `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min); 404 se não estiver `ativo` |
+| `POST /api/auth/login` | público | `{ email, senha }` → `{ token, usuario }` (JWT 12h com `id`, `email`, `super_admin`) |
+| `GET/POST /api/admin/sitios`, `GET/PUT /api/admin/sitios/:id` | `auth` + `requireSuperAdmin` | Cadastro de sítios (tela `admin/sitios.php` do painel PHP) |
+
+Scripts: `npm run superadmin` (cria/atualiza super-admin, pergunta a senha sem mostrar; `SA_NOME`/`SA_EMAIL`/`SA_SENHA` para uso não interativo), `npm run sitio:paraiso` (cadastra/atualiza o 1º sítio a partir de `scripts/dados-paraiso.js`).
+
 ## Variáveis de ambiente
 
 Ver `.env.example`. Nunca commitar `.env`.
