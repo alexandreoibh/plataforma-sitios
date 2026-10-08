@@ -28,6 +28,8 @@ Healthcheck: `GET /api/health`. Diagnóstico do banco (versão + tabelas): `GET 
 - O mesmo banco tem os schemas do e-Morador (`"condominio-bh"`, `sgw`…): **nunca** criar, alterar ou apagar nada fora do schema da plataforma.
 - Toda SQL usa o nome qualificado via `postgres.SCHEMA` (ex.: `` `${SCHEMA}.tb_reservas` ``), nunca o `search_path`.
 - Recursos que **não existem** na 9.2: `jsonb`, operadores `->`/`->>` em `json`, `json_build_object`, `ON CONFLICT` (upsert), `CREATE INDEX IF NOT EXISTS`, Row Level Security. Upsert = SELECT + INSERT/UPDATE na mesma transação; índice condicional = bloco `DO $$ … IF NOT EXISTS (pg_class) …`.
+- Colunas do `information_schema` (tipo `sql_identifier`) voltam num formato que o driver não mapeia por nome na 9.2: sempre castar (`table_name::text AS table_name`).
+- O Sequelize gera `CREATE SCHEMA IF NOT EXISTS` (só existe na 9.3+) ao preparar a `SequelizeMeta`; `src/database/config_migrations.js` substitui isso por um bloco `DO` compatível. Não remover.
 - Concorrência (ex.: duas aprovações para as mesmas datas): `pg_advisory_xact_lock(sitio_id)` dentro da transação, depois conferir conflito e gravar.
 - Queries: `postgres.query(sql, { replacements, type: QueryTypes.SELECT, transaction })`.
 

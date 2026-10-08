@@ -1,5 +1,14 @@
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
+
+// Em produção (Vercel) o segredo é obrigatório e forte: com o padrão de dev qualquer um forjaria tokens.
+const IS_PROD = Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production';
+const RAW_SECRET = process.env.JWT_SECRET || '';
+const SECRET_OK = RAW_SECRET.length >= 32;
+const JWT_SECRET = SECRET_OK ? RAW_SECRET : (IS_PROD ? null : 'dev_jwt_secret_change_me');
+if (!JWT_SECRET) {
+    console.error('[auth] JWT_SECRET ausente ou curto (mín. 32 caracteres): login e rotas protegidas ficam bloqueados.');
+}
+const secretMissing = (res) => res.status(500).send({ message: 'Configuração ausente no servidor (JWT_SECRET).' });
 
 const extractTokenFromRequest = (req) => {
     const authHeader = req.header('Authorization') || req.header('authorization');
@@ -21,6 +30,7 @@ const extractTokenFromRequest = (req) => {
 //   req.idusuario, req.sitio_id (sítio ativo), req.perfil ('admin'|'operador'), req.superAdmin
 // Super-admin pode operar em outro sítio enviando o header X-Sitio-Id (override, como o Admin do e-Morador).
 const auth = async (req, res, next) => {
+    if (!JWT_SECRET) return secretMissing(res);
     try {
         const token = extractTokenFromRequest(req);
         if (!token) {
@@ -52,7 +62,10 @@ const requireAdmin = (req, res, next) => {
     return res.status(403).send({ message: 'Acesso restrito ao administrador.' });
 };
 
-const signToken = (payload, expiresIn = '12h') => jwt.sign(payload, JWT_SECRET, { expiresIn });
+const signToken = (payload, expiresIn = '12h') => {
+    if (!JWT_SECRET) throw Object.assign(new Error('Configuração ausente no servidor (JWT_SECRET).'), { status: 500 });
+    return jwt.sign(payload, JWT_SECRET, { expiresIn });
+};
 
 module.exports = auth;
 module.exports.requireAdmin = requireAdmin;

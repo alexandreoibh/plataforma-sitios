@@ -17,17 +17,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
     return [k, v === undefined ? true : v];
 }));
 
-const SITIO = {
-    slug: 'paraiso-serra-do-cipo',
-    nome: 'Paraíso na Serra do Cipó',
-    dominios: ['paraisonaserradocipo.com.br', 'www.paraisonaserradocipo.com.br'],
-    whatsapp: '5531996519766',
-    telefone: '(31) 99651-9766',
-    endereco: 'São José da Serra — Jaboticatubas/MG',
-    maps_query: 'São José da Serra, Jaboticatubas - MG',
-    min_hospedes: 10,
-    max_hospedes: 20,
-};
+const SITIO = require('./dados-paraiso');
 
 // password_hash() do PHP gera $2y$; bcryptjs confere $2a$/$2b$ (mesmo algoritmo)
 const bcryptCompat = (hash) => String(hash).replace(/^\$2y\$/, '$2b$');
@@ -63,8 +53,8 @@ async function main() {
             }
         } else {
             [sitio] = await q(
-                `INSERT INTO ${S}.tb_sitios (slug, nome, dominios, whatsapp, telefone, endereco, maps_query, min_hospedes, max_hospedes)
-                 VALUES (:slug, :nome, ARRAY[:dominios]::text[], :whatsapp, :telefone, :endereco, :maps_query, :min_hospedes, :max_hospedes)
+                `INSERT INTO ${S}.tb_sitios (slug, nome, slogan, dominios, whatsapp, telefone, email_contato, endereco, maps_query, instagram, facebook, min_hospedes, max_hospedes)
+                 VALUES (:slug, :nome, :slogan, ARRAY[:dominios]::text[], :whatsapp, :telefone, :email_contato, :endereco, :maps_query, :instagram, :facebook, :min_hospedes, :max_hospedes)
                  RETURNING id`, SITIO, t, QueryTypes.SELECT);
         }
         const sitioId = sitio.id;

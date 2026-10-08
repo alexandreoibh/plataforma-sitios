@@ -11,7 +11,8 @@ class HealthController {
         try {
             const [versao] = await postgres.query('SELECT version() AS versao', { type: QueryTypes.SELECT });
             const tabelas = await postgres.query(
-                `SELECT table_name FROM information_schema.tables WHERE table_schema = :schema ORDER BY table_name`,
+                // ::text — na 9.2 o tipo sql_identifier volta num formato que o driver não mapeia por nome
+                `SELECT table_name::text AS table_name FROM information_schema.tables WHERE table_schema = :schema ORDER BY 1`,
                 { replacements: { schema: postgres.SCHEMA.replace(/"/g, '') }, type: QueryTypes.SELECT }
             );
             return res.status(200).json({

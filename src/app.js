@@ -13,11 +13,13 @@ app.use(cors({
 }));
 
 const healthRoute = require('./routes/health');
+const publicRoute = require('./routes/public');
 
 app.use(bodyparser.json());
 app.use(bodyparser.urlencoded({ extended: false }));
 
 app.use('/api/health', healthRoute);
+app.use('/api/public', publicRoute);
 
 app.use((error, req, res, next) => {
     res.status(error.status || 500);
