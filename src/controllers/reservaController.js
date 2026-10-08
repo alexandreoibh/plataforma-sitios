@@ -1,6 +1,6 @@
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
-const { periodHasConflict } = require('../helpers/regras');
+const { periodHasConflict, marcarConflitos } = require('../helpers/regras');
 const { hojeBR } = require('../helpers/datas');
 
 const S = postgres.SCHEMA;
@@ -21,7 +21,7 @@ const MSG_ACAO = {
 
 // Reservas do sítio do token (painel). Regras portadas de admin/reservas.php, index.php e agenda.php.
 class ReservaController {
-    // GET /api/painel/reservas?status=pendente,aprovada&q=&de=&ate=&checkout_apos=&ordem=checkin|criado&conflito=1
+    // GET /api/painel/reservas?status=pendente,aprovada&q=&de=&ate=&checkout_apos=&ordem=checkin|criado&conflito=1&contagem=1
     async listar(req, res) {
         try {
             const where = ['sitio_id = :s'];
@@ -45,14 +45,12 @@ class ReservaController {
             const ordem = req.query.ordem === 'checkin' ? 'checkin' : req.query.ordem === 'checkin_desc' ? 'checkin DESC' : 'criado_em DESC';
             const reservas = await sel(`SELECT ${COLUNAS} FROM ${S}.tb_reservas WHERE ${where.join(' AND ')} ORDER BY ${ordem}, id`, rep);
 
-            // Pedidos pendentes: marca quem conflita com reserva aprovada ou bloqueio (painel inicial)
-            if (req.query.conflito === '1') {
-                for (const r of reservas) {
-                    r.conflito = ['pendente', 'aprovada'].includes(r.status)
-                        && await periodHasConflict(req.sitio_id, r.checkin, r.checkout, r.status === 'aprovada' ? r.id : null);
-                }
-            }
-            return res.status(200).json({ reservas, contagem: await this._contagem(req.sitio_id) });
+            // Marca quem conflita com reserva aprovada ou bloqueio (uma consulta para a lista toda)
+            if (req.query.conflito === '1') await marcarConflitos(req.sitio_id, reservas);
+            // Total de cada aba (Reservas): só quando pedido, para não pagar uma ida ao banco à toa
+            const out = { reservas };
+            if (req.query.contagem === '1') out.contagem = await this._contagem(req.sitio_id);
+            return res.status(200).json(out);
         } catch (error) {
             return this._erro(res, error, 'listar');
         }
@@ -63,13 +61,14 @@ class ReservaController {
         try {
             const r = await this._reserva(req.sitio_id, req.params.id);
             if (!r) return res.status(404).json({ message: 'Pedido não encontrado.' });
-            const conflito = ['pendente', 'aprovada'].includes(r.status) && await periodHasConflict(req.sitio_id, r.checkin, r.checkout, r.id);
-            const outros = r.status !== 'pendente' ? [] : await sel(
+            const [conflito, outros] = await Promise.all([
+                ['pendente', 'aprovada'].includes(r.status) && periodHasConflict(req.sitio_id, r.checkin, r.checkout, r.id),
+                r.status !== 'pendente' ? [] : sel(
                 `SELECT id, nome FROM ${S}.tb_reservas
                   WHERE sitio_id = :s AND status = 'pendente' AND id <> :id AND checkin < :co AND checkout > :ci ORDER BY id`,
-                { s: req.sitio_id, id: r.id, co: r.checkout, ci: r.checkin }
-            );
-            return res.status(200).json({ reserva: r, conflito, outros_pendentes: outros });
+                { s: req.sitio_id, id: r.id, co: r.checkout, ci: r.checkin }),
+            ]);
+            return res.status(200).json({ reserva: r, conflito: Boolean(conflito), outros_pendentes: outros });
         } catch (error) {
             return this._erro(res, error, 'buscar');
         }

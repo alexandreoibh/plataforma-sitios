@@ -12,11 +12,22 @@ class PainelController {
     // GET /api/painel/contexto → quem sou, sítio ativo (identidade), meu perfil nele e nº de pedidos pendentes (badge do menu)
     async contexto(req, res) {
         try {
-            const [usuario] = await sel(`SELECT id, nome, email, telefone, super_admin, ultimo_acesso FROM ${S}.tb_usuarios WHERE id = :u`, { u: req.idusuario });
-            const [sitio] = await sel(
-                `SELECT id, slug, nome, slogan, telefone, whatsapp, email_contato, endereco, maps_query, instagram, facebook,
-                        dominios, min_hospedes, max_hospedes, status FROM ${S}.tb_sitios WHERE id = :s`, { s: req.sitio_id });
-            const [{ n }] = await sel(`SELECT count(*)::int AS n FROM ${S}.tb_reservas WHERE sitio_id = :s AND status = 'pendente'`, { s: req.sitio_id });
+            // Uma consulta só (usuário + sítio + pendentes)
+            const [r] = await sel(
+                `SELECT u.id AS u_id, u.nome AS u_nome, u.email AS u_email, u.telefone AS u_telefone, u.super_admin AS u_super_admin,
+                        u.ultimo_acesso AS u_ultimo_acesso,
+                        s.id, s.slug, s.nome, s.slogan, s.telefone, s.whatsapp, s.email_contato, s.endereco, s.maps_query,
+                        s.instagram, s.facebook, s.dominios, s.min_hospedes, s.max_hospedes, s.status,
+                        (SELECT count(*)::int FROM ${S}.tb_reservas x WHERE x.sitio_id = s.id AND x.status = 'pendente') AS pendentes
+                   FROM ${S}.tb_sitios s, ${S}.tb_usuarios u WHERE s.id = :s AND u.id = :u`,
+                { s: req.sitio_id, u: req.idusuario });
+            const usuario = {};
+            const sitio = {};
+            Object.entries(r).forEach(([k, v]) => {
+                if (k.startsWith('u_')) usuario[k.slice(2)] = v;
+                else if (k !== 'pendentes') sitio[k] = v;
+            });
+            const n = r.pendentes;
             return res.status(200).json({ usuario, sitio, perfil: req.perfil, pendentes: n });
         } catch (error) {
             return this._erro(res, error, 'contexto');

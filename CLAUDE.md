@@ -64,13 +64,16 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 | `GET /api/health` | público | Healthcheck |
 | `GET /api/health/db` | `X-Cron-Queue-Key` | Versão do Postgres e tabelas do schema |
 | `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min); 404 se não estiver `ativo` |
+| `GET /api/public/sitios/:slug/disponibilidade` | público | `?inicio=YYYY-MM&meses=2` → `{ ocupadas, hoje, maxData, minPadrao, regras }` (mesmo formato do `api/disponibilidade.php` do front) |
+| `POST /api/public/sitios/:slug/reservas` | `X-Front-Key` (env `FRONT_KEY`) | Pedido do site (pendente), validações do `reservar.php`; 422 com `erros[]`; 429 após 5 pedidos pendentes do mesmo e-mail em 24h. O front envia os e-mails com o mailer dele |
 | `POST /api/auth/login` | público | `{ email, senha }` → `{ token, usuario, sitios, sitio }`. Com um sítio só, o token já vem nele (`sitio_id`, `perfil`); com vários (ou super-admin), `sitio` = null |
 | `POST /api/auth/sitio` | `auth` | `{ sitio_id }` → token novo no sítio escolhido |
+| `POST /api/auth/senha/esqueci\|validar\|redefinir` | `X-Front-Key` | Esqueci minha senha: `esqueci {email, slug}` gera o token (só para quem tem acesso ao sítio; 1h; não repete em 2 min) e devolve `{nome, email, token, configuracoes}` para o painel enviar o e-mail; `validar {token}`; `redefinir {token, senha}` |
 | `GET/POST /api/admin/sitios`, `GET/PUT /api/admin/sitios/:id` | `auth` + `requireSuperAdmin` | Cadastro de sítios (tela `admin/sitios.php` do painel PHP) |
 | `GET/POST /api/admin/sitios/:id/membros`, `PUT/DELETE /api/admin/sitios/:id/membros/:usuarioId` | `auth` + `requireSuperAdmin` | Usuários do sítio (vínculo `tb_membros`). POST com e-mail novo cria o usuário (nome + senha). DELETE remove só o vínculo; nunca deixa o sítio sem admin (409) |
 | `GET /api/painel/contexto` | painel | Usuário, identidade do sítio ativo, perfil e nº de pendentes |
 | `PUT /api/painel/perfil`, `PUT /api/painel/perfil/senha` | painel | Meus dados |
-| `GET /api/painel/reservas` | painel | `?status=a,b&q=&de=&ate=&checkout_apos=&ordem=checkin\|checkin_desc&conflito=1` → `{ reservas, contagem }` |
+| `GET /api/painel/reservas` | painel | `?status=a,b&q=&de=&ate=&checkout_apos=&ordem=checkin\|checkin_desc&conflito=1&contagem=1` → `{ reservas, contagem? }` (conflitos calculados em lote) |
 | `GET /api/painel/reservas/:id` | painel | `{ reserva, conflito, outros_pendentes }` |
 | `POST /api/painel/reservas/:id/aprovar\|recusar\|cancelar` | painel | Transição de status (aprovar exige pagamento e trava o sítio) |
 | `PUT /api/painel/reservas/:id/pagamento` | painel | Pagamento de reserva aprovada |
@@ -80,7 +83,7 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 | `GET/POST /api/painel/regras-minimo`, `DELETE …/:id` | painel (escrita: admin) | Mínimo de noites por período |
 | `GET/POST /api/painel/usuarios`, `PUT/DELETE …/:usuarioId`, `POST …/:usuarioId/senha` | painel + admin | Usuários do sítio (`services/membros.js`) |
 
-"painel" = `auth` + `requireSitio`. O painel recebe as reservas com as mesmas colunas do MySQL do PHP; os recebíveis do financeiro continuam calculados pelo painel (`includes/finance.php`).
+"painel" = `auth` + `requireSitio`. Consumidor: `C:\xampp8\painel-sitios` (painel PHP único). O banco é remoto (~250 ms por consulta): junte consultas e calcule em lote. O painel recebe as reservas com as mesmas colunas do MySQL do PHP; os recebíveis do financeiro continuam calculados pelo painel (`includes/finance.php`).
 
 Scripts: `npm run superadmin` (cria/atualiza super-admin, pergunta a senha sem mostrar; `SA_NOME`/`SA_EMAIL`/`SA_SENHA` para uso não interativo), `npm run sitio:paraiso` (cadastra/atualiza o 1º sítio a partir de `scripts/dados-paraiso.js`).
 

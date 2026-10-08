@@ -16,31 +16,51 @@ async function setting(sitioId, chave, padrao = CONFIG_PADRAO[chave] ?? '', tran
     return r ? r.valor : padrao;
 }
 
-/** Noites ocupadas em [de, ate), como Set de 'YYYY-MM-DD'. */
-async function occupiedNights(sitioId, de, ate, ignorarReservaId = null, transaction) {
-    const noites = new Set();
-    const add = (ini, fim) => {
-        let d = ini > de ? ini : de;
-        const end = fim < ate ? fim : ate;
-        while (d < end) { noites.add(d); d = addDays(d, 1); }
-    };
-    const reservas = await sel(
-        `SELECT checkin::text AS checkin, checkout::text AS checkout FROM ${S}.tb_reservas
-          WHERE sitio_id = :s AND status = 'aprovada' AND checkin < :ate AND checkout > :de AND id <> :ign`,
-        { s: sitioId, de, ate, ign: ignorarReservaId || 0 }, transaction
-    );
-    reservas.forEach((r) => add(r.checkin, r.checkout));
-    const bloqueios = await sel(
-        `SELECT data_inicio::text AS ini, data_fim::text AS fim FROM ${S}.tb_bloqueios
+// Intervalos que ocupam noites no sítio e tocam [de, ate): reservas aprovadas [checkin, checkout) e
+// bloqueios [data_inicio, data_fim + 1). Uma consulta só (o banco é remoto: cada ida custa caro).
+async function intervalosOcupados(sitioId, de, ate, transaction) {
+    return sel(
+        `SELECT id AS reserva_id, checkin::text AS ini, checkout::text AS fim FROM ${S}.tb_reservas
+          WHERE sitio_id = :s AND status = 'aprovada' AND checkin < :ate AND checkout > :de
+         UNION ALL
+         SELECT NULL, data_inicio::text, (data_fim + 1)::text FROM ${S}.tb_bloqueios
           WHERE sitio_id = :s AND data_inicio < :ate AND data_fim >= :de`,
         { s: sitioId, de, ate }, transaction
     );
-    bloqueios.forEach((b) => add(b.ini, addDays(b.fim, 1)));
+}
+
+/** Noites ocupadas em [de, ate), como Set de 'YYYY-MM-DD'. */
+async function occupiedNights(sitioId, de, ate, ignorarReservaId = null, transaction) {
+    const noites = new Set();
+    for (const i of await intervalosOcupados(sitioId, de, ate, transaction)) {
+        if (ignorarReservaId && Number(i.reserva_id) === Number(ignorarReservaId)) continue;
+        let d = i.ini > de ? i.ini : de;
+        const end = i.fim < ate ? i.fim : ate;
+        while (d < end) { noites.add(d); d = addDays(d, 1); }
+    }
     return noites;
 }
 
 async function periodHasConflict(sitioId, checkin, checkout, ignorarReservaId = null, transaction) {
-    return (await occupiedNights(sitioId, checkin, checkout, ignorarReservaId, transaction)).size > 0;
+    return (await intervalosOcupados(sitioId, checkin, checkout, transaction))
+        .some((i) => !(ignorarReservaId && Number(i.reserva_id) === Number(ignorarReservaId)));
+}
+
+/**
+ * Marca `conflito` em várias reservas com UMA consulta: conflita quem tem noite ocupada por outra
+ * reserva aprovada ou por bloqueio (a própria reserva aprovada não conta).
+ */
+async function marcarConflitos(sitioId, reservas, transaction) {
+    const alvo = reservas.filter((r) => ['pendente', 'aprovada'].includes(r.status));
+    reservas.forEach((r) => { r.conflito = false; });
+    if (!alvo.length) return reservas;
+    const de = alvo.reduce((m, r) => (r.checkin < m ? r.checkin : m), alvo[0].checkin);
+    const ate = alvo.reduce((m, r) => (r.checkout > m ? r.checkout : m), alvo[0].checkout);
+    const ocupados = await intervalosOcupados(sitioId, de, ate, transaction);
+    for (const r of alvo) {
+        r.conflito = ocupados.some((i) => Number(i.reserva_id) !== Number(r.id) && i.ini < r.checkout && i.fim > r.checkin);
+    }
+    return reservas;
 }
 
 async function minNightsFor(sitioId, checkin, transaction) {
@@ -67,4 +87,4 @@ async function validatePeriod(sitioId, checkin, checkout, transaction) {
     return null;
 }
 
-module.exports = { setting, occupiedNights, periodHasConflict, minNightsFor, maxBookingDate, validatePeriod, CONFIG_PADRAO };
+module.exports = { setting, occupiedNights, periodHasConflict, marcarConflitos, minNightsFor, maxBookingDate, validatePeriod, CONFIG_PADRAO };
