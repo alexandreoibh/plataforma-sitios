@@ -62,6 +62,12 @@ const requireAdmin = (req, res, next) => {
     return res.status(403).send({ message: 'Acesso restrito ao administrador.' });
 };
 
+// Rotas da plataforma (cadastro de sítios etc.): só o super-admin
+const requireSuperAdmin = (req, res, next) => {
+    if (req.superAdmin) return next();
+    return res.status(403).send({ message: 'Acesso restrito ao super-admin.' });
+};
+
 const signToken = (payload, expiresIn = '12h') => {
     if (!JWT_SECRET) throw Object.assign(new Error('Configuração ausente no servidor (JWT_SECRET).'), { status: 500 });
     return jwt.sign(payload, JWT_SECRET, { expiresIn });
@@ -69,4 +75,5 @@ const signToken = (payload, expiresIn = '12h') => {
 
 module.exports = auth;
 module.exports.requireAdmin = requireAdmin;
+module.exports.requireSuperAdmin = requireSuperAdmin;
 module.exports.signToken = signToken;
