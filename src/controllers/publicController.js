@@ -22,7 +22,8 @@ class PublicController {
             if (!sitio) return res.status(404).json({ message: 'Sítio não encontrado.' });
             sitio.espacos = await espacosDoSitio(sitio.id, { publico: true });
             delete sitio.id;
-            res.set('Cache-Control', 'public, max-age=300');
+            // Curto: espaço novo cadastrado no painel precisa aparecer logo no site
+            res.set('Cache-Control', 'public, max-age=60');
             return res.status(200).json(sitio);
         } catch (error) {
             console.error('[public.sitio]', error.message);
