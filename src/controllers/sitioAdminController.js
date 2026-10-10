@@ -1,6 +1,7 @@
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
 const membros = require('../services/membros');
+const { garantirEspacoPrincipal } = require('../helpers/espacos');
 
 const S = postgres.SCHEMA;
 // Campos editáveis pelo super-admin (as colunas têm o mesmo nome)
@@ -34,11 +35,16 @@ class SitioAdminController {
         try {
             const dados = this._entrada(req.body);
             if (await this._slugEmUso(dados.slug)) return this._slugDuplicado(res);
-            const [novo] = await postgres.query(
-                `INSERT INTO ${S}.tb_sitios (${CAMPOS.join(', ')}, dominios)
-                 VALUES (${CAMPOS.map((c) => `:${c}`).join(', ')}, ${this._arraySql(dados.dominios)}) RETURNING id`,
-                { replacements: dados, type: QueryTypes.SELECT }
-            );
+            // Sítio novo já nasce com o espaço principal (toda reserva/bloqueio/regra precisa de um espaço)
+            const novo = await postgres.transaction(async (transaction) => {
+                const [s] = await postgres.query(
+                    `INSERT INTO ${S}.tb_sitios (${CAMPOS.join(', ')}, dominios)
+                     VALUES (${CAMPOS.map((c) => `:${c}`).join(', ')}, ${this._arraySql(dados.dominios)}) RETURNING id`,
+                    { replacements: dados, type: QueryTypes.SELECT, transaction }
+                );
+                await garantirEspacoPrincipal(s.id, transaction);
+                return s;
+            });
             const [sitio] = await postgres.query(`${SELECT} WHERE id = :id`, { replacements: { id: novo.id }, type: QueryTypes.SELECT });
             return res.status(201).json(this._saida(sitio));
         } catch (error) {

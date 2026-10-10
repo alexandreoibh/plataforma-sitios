@@ -2,6 +2,7 @@ const dns = require('dns').promises;
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
 const { CONFIG_PADRAO } = require('../helpers/regras');
+const { resolverEspacos, responderErroEspaco } = require('../helpers/espacos');
 
 const S = postgres.SCHEMA;
 const sel = (sql, replacements, transaction) => postgres.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
@@ -53,28 +54,40 @@ class ConfiguracaoController {
         }
     }
 
-    // GET /api/painel/regras-minimo
+    // GET /api/painel/regras-minimo?espaco_id= — cada regra é de um espaço
     async listarRegras(req, res) {
         try {
+            const espacoId = /^\d{1,9}$/.test(String(req.query.espaco_id || '')) ? Number(req.query.espaco_id) : null;
             const regras = await sel(
-                `SELECT id, data_inicio::text AS data_inicio, data_fim::text AS data_fim, min_noites, descricao
-                   FROM ${S}.tb_regras_minimo WHERE sitio_id = :s ORDER BY data_inicio`, { s: req.sitio_id });
+                `SELECT r.id, r.espaco_id, (SELECT e.nome FROM ${S}.tb_espacos e WHERE e.id = r.espaco_id) AS espaco_nome,
+                        r.data_inicio::text AS data_inicio, r.data_fim::text AS data_fim, r.min_noites, r.descricao
+                   FROM ${S}.tb_regras_minimo r WHERE r.sitio_id = :s${espacoId ? ' AND r.espaco_id = :e' : ''}
+                  ORDER BY r.data_inicio, r.espaco_id`, { s: req.sitio_id, e: espacoId });
             return res.status(200).json(regras);
         } catch (error) {
             return this._erro(res, error, 'listarRegras');
         }
     }
 
-    // POST /api/painel/regras-minimo — { data_inicio, data_fim, min_noites 1..30, descricao? }
+    // POST /api/painel/regras-minimo — { espaco_ids[], data_inicio, data_fim, min_noites 1..30, descricao? } → uma regra por espaço
     async criarRegra(req, res) {
         try {
             const { data_inicio, data_fim } = req.body;
             if (data_fim < data_inicio) return res.status(422).json({ message: 'Informe um período válido e um mínimo entre 1 e 30 noites.' });
-            const [r] = await sel(
-                `INSERT INTO ${S}.tb_regras_minimo (sitio_id, data_inicio, data_fim, min_noites, descricao)
-                 VALUES (:s, :i, :f, :m, :d) RETURNING id`,
-                { s: req.sitio_id, i: data_inicio, f: data_fim, m: Number(req.body.min_noites), d: String(req.body.descricao || '').trim().slice(0, 80) || null });
-            return res.status(201).json({ id: r.id, message: 'Regra adicionada.' });
+            const { espacos, erro } = await resolverEspacos(req.sitio_id, req.body.espaco_ids);
+            if (erro) return responderErroEspaco(res, erro);
+            const dados = { s: req.sitio_id, i: data_inicio, f: data_fim, m: Number(req.body.min_noites), d: String(req.body.descricao || '').trim().slice(0, 80) || null };
+            const ids = await postgres.transaction(async (transaction) => {
+                const out = [];
+                for (const e of espacos) {
+                    const [r] = await sel(
+                        `INSERT INTO ${S}.tb_regras_minimo (sitio_id, espaco_id, data_inicio, data_fim, min_noites, descricao)
+                         VALUES (:s, :e, :i, :f, :m, :d) RETURNING id`, { ...dados, e: e.id }, transaction);
+                    out.push(r.id);
+                }
+                return out;
+            });
+            return res.status(201).json({ id: ids[0], ids, message: espacos.length > 1 ? `Regra adicionada em ${espacos.length} espaços.` : 'Regra adicionada.' });
         } catch (error) {
             return this._erro(res, error, 'criarRegra');
         }

@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const { QueryTypes } = require('sequelize');
 const postgres = require('../src/database/postgres');
+const { garantirEspacoPrincipal } = require('../src/helpers/espacos');
 
 const nome = String(process.argv[2] || '').replace(/[^a-z0-9-]/gi, '');
 const arquivo = path.join(__dirname, `dados-${nome}.js`);
@@ -37,6 +38,7 @@ async function main() {
                      VALUES (:slug, ${CAMPOS.map((c) => `:${c}`).join(', ')}, ARRAY[:dominios]::text[]) RETURNING id`, dados);
             console.log(`Sítio ${SITIO.slug} cadastrado (id ${sitio.id}).`);
         }
+        await garantirEspacoPrincipal(sitio.id, t);
         for (const [chave, valor] of Object.entries(SITIO.configuracoes || {})) {
             const [existe] = await q(`SELECT 1 AS x FROM ${S}.tb_configuracoes WHERE sitio_id = :s AND chave = :c`, { s: sitio.id, c: chave });
             if (existe) continue;

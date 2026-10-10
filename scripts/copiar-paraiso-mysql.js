@@ -18,6 +18,7 @@ require('dotenv').config();
 const mysql = require('mysql2/promise');
 const { QueryTypes } = require('sequelize');
 const postgres = require('../src/database/postgres');
+const { garantirEspacoPrincipal } = require('../src/helpers/espacos');
 
 const S = postgres.SCHEMA;
 const P = process.env.MYSQL_PREFIX || 'sc_';
@@ -36,14 +37,14 @@ const ymd = (d) => (d ? (d instanceof Date ? d.toISOString().slice(0, 10) : Stri
 
 const q = (sql, replacements, t, type = QueryTypes.SELECT) => postgres.query(sql, { replacements, transaction: t, type });
 
-async function inserirReserva(r, sitioId, t) {
+async function inserirReserva(r, sitioId, espacoId, t) {
     await q(
-        `INSERT INTO ${S}.tb_reservas (id, sitio_id, nome, email, telefone, checkin, checkout, hospedes, mensagem, status,
+        `INSERT INTO ${S}.tb_reservas (id, sitio_id, espaco_id, nome, email, telefone, checkin, checkout, hospedes, mensagem, status,
             observacao_admin, pagamento_forma, pagamento_condicao, pagamento_parcelas, valor_total,
             entrada_paga, entrada_paga_em, saldo_pago, saldo_pago_em, aprovada_em, criado_em, atualizado_em)
-         VALUES (:id, :s, :nome, :email, :telefone, :checkin, :checkout, :hospedes, :mensagem, :status,
+         VALUES (:id, :s, :e, :nome, :email, :telefone, :checkin, :checkout, :hospedes, :mensagem, :status,
             :obs, :forma, :cond, :parcelas, :valor, :ep, :epEm, :sp, :spEm, :aprov, :criado, :atual)`,
-        { id: r.id, s: sitioId, nome: r.nome, email: r.email, telefone: r.telefone, checkin: ymd(r.checkin), checkout: ymd(r.checkout),
+        { id: r.id, s: sitioId, e: espacoId, nome: r.nome, email: r.email, telefone: r.telefone, checkin: ymd(r.checkin), checkout: ymd(r.checkout),
           hospedes: r.hospedes, mensagem: r.mensagem || null, status: r.status, obs: r.observacao_admin || null,
           forma: r.pagamento_forma || null, cond: r.pagamento_condicao || null, parcelas: r.pagamento_parcelas || null,
           valor: r.valor_total === undefined ? null : r.valor_total, ep: bool(r.entrada_paga), epEm: ymd(r.entrada_paga_em),
@@ -51,9 +52,9 @@ async function inserirReserva(r, sitioId, t) {
         t, QueryTypes.INSERT);
 }
 
-async function inserirBloqueio(b, sitioId, t) {
-    await q(`INSERT INTO ${S}.tb_bloqueios (sitio_id, data_inicio, data_fim, motivo, criado_em) VALUES (:s, :i, :f, :m, :c)`,
-        { s: sitioId, i: ymd(b.data_inicio), f: ymd(b.data_fim), m: b.motivo || null, c: b.criado_em }, t, QueryTypes.INSERT);
+async function inserirBloqueio(b, sitioId, espacoId, t) {
+    await q(`INSERT INTO ${S}.tb_bloqueios (sitio_id, espaco_id, data_inicio, data_fim, motivo, criado_em) VALUES (:s, :e, :i, :f, :m, :c)`,
+        { s: sitioId, e: espacoId, i: ymd(b.data_inicio), f: ymd(b.data_fim), m: b.motivo || null, c: b.criado_em }, t, QueryTypes.INSERT);
 }
 
 async function lerMysql() {
@@ -96,6 +97,8 @@ async function copiarTudo() {
                  RETURNING id`, SITIO, t, QueryTypes.SELECT);
         }
         const sitioId = sitio.id;
+        // Tudo do Paraíso vai para o espaço principal do sítio
+        const espacoId = await garantirEspacoPrincipal(sitioId, t);
 
         // Usuários: o e-mail é global na plataforma. Já existe → vincula e (se não for super-admin) atualiza com o MySQL.
         for (const u of usuarios) {
@@ -120,12 +123,12 @@ async function copiarTudo() {
                 { s: sitioId, k: c.chave, v: c.valor }, t, QueryTypes.INSERT);
         }
         for (const r of regras) {
-            await q(`INSERT INTO ${S}.tb_regras_minimo (sitio_id, data_inicio, data_fim, min_noites, descricao) VALUES (:s, :i, :f, :m, :d)`,
-                { s: sitioId, i: ymd(r.data_inicio), f: ymd(r.data_fim), m: r.min_noites, d: r.descricao || null }, t, QueryTypes.INSERT);
+            await q(`INSERT INTO ${S}.tb_regras_minimo (sitio_id, espaco_id, data_inicio, data_fim, min_noites, descricao) VALUES (:s, :e, :i, :f, :m, :d)`,
+                { s: sitioId, e: espacoId, i: ymd(r.data_inicio), f: ymd(r.data_fim), m: r.min_noites, d: r.descricao || null }, t, QueryTypes.INSERT);
         }
-        for (const b of bloqueios) await inserirBloqueio(b, sitioId, t);
+        for (const b of bloqueios) await inserirBloqueio(b, sitioId, espacoId, t);
         // Reservas mantêm o id (é o nº do pedido que o cliente recebeu por e-mail)
-        for (const r of reservas) await inserirReserva(r, sitioId, t);
+        for (const r of reservas) await inserirReserva(r, sitioId, espacoId, t);
 
         // A sequência continua depois do maior nº (de qualquer sítio) + folga. setval funciona na 9.2.
         const [{ prox }] = await q(
@@ -140,6 +143,7 @@ async function complementar() {
     await postgres.transaction(async (t) => {
         const [sitio] = await q(`SELECT id FROM ${S}.tb_sitios WHERE slug = :slug`, { slug: SITIO.slug }, t);
         if (!sitio) throw new Error('Sítio do Paraíso não existe no Postgres: rode a cópia completa primeiro.');
+        const espacoId = await garantirEspacoPrincipal(sitio.id, t);
         // id → última atualização no Postgres (texto 'YYYY-MM-DD HH:MM:SS', horário de Brasília, como no MySQL)
         const atualizadas = new Map((await q(`SELECT id, sitio_id, to_char(atualizado_em, 'YYYY-MM-DD HH24:MI:SS') AS em FROM ${S}.tb_reservas`, {}, t))
             .map((r) => [Number(r.id), r]));
@@ -154,19 +158,19 @@ async function complementar() {
             // Já existe: se mudou no admin antigo DEPOIS da última mudança no Postgres (aprovação, pagamento…), o MySQL vence
             if (pg && pg.sitio_id === sitio.id && String(r.atualizado_em).slice(0, 19) > pg.em) {
                 await q(`DELETE FROM ${S}.tb_reservas WHERE id = :id AND sitio_id = :s`, { id: r.id, s: sitio.id }, t, QueryTypes.DELETE);
-                await inserirReserva(r, sitio.id, t);
+                await inserirReserva(r, sitio.id, espacoId, t);
                 nu++;
                 console.log(`  ~ reserva nº ${r.id} atualizada (${r.status}, alterada no admin antigo em ${r.atualizado_em})`);
                 continue;
             }
             if (ids.has(Number(r.id))) continue;
-            await inserirReserva(r, sitio.id, t);
+            await inserirReserva(r, sitio.id, espacoId, t);
             nr++;
             console.log(`  + reserva nº ${r.id} (${r.nome}, ${ymd(r.checkin)} a ${ymd(r.checkout)}, ${r.status})`);
         }
         for (const b of bloqueios) {
             if (periodos.has(`${ymd(b.data_inicio)}|${ymd(b.data_fim)}`)) continue;
-            await inserirBloqueio(b, sitio.id, t);
+            await inserirBloqueio(b, sitio.id, espacoId, t);
             nb++;
             console.log(`  + bloqueio ${ymd(b.data_inicio)} a ${ymd(b.data_fim)}`);
         }

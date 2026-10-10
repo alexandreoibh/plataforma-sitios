@@ -11,7 +11,9 @@ const ReservaController = require('../controllers/reservaController');
 const BloqueioController = require('../controllers/bloqueioController');
 const ConfiguracaoController = require('../controllers/configuracaoController');
 const PainelController = require('../controllers/painelController');
+const EspacoController = require('../controllers/espacoController');
 
+const espacos = new EspacoController();
 const reservas = new ReservaController();
 const bloqueios = new BloqueioController();
 const configs = new ConfiguracaoController();
@@ -44,6 +46,10 @@ router.post('/reservas/:id/:acao(aprovar|recusar|cancelar)', [
     id(),
     opcional('observacao').isString().isLength({ max: 2000 }).withMessage('Observação: até 2000 caracteres.'),
 ], validate, reservas.mudarStatus.bind(reservas));
+router.put('/reservas/:id/espaco', [
+    id(),
+    body('espaco_id').isInt({ min: 1, max: 2147483647 }).withMessage('Escolha o espaço.'),
+], validate, reservas.trocarEspaco.bind(reservas));
 router.put('/reservas/:id/pagamento', [id()], validate, reservas.atualizarPagamento.bind(reservas));
 router.post('/reservas/:id/recebimento', [
     id(),
@@ -59,6 +65,11 @@ router.post('/bloqueios', [
     opcional('motivo').isString().isLength({ max: 120 }).withMessage('Motivo: até 120 caracteres.'),
 ], validate, bloqueios.criar.bind(bloqueios));
 router.delete('/bloqueios/:id', [id()], validate, bloqueios.remover.bind(bloqueios));
+
+// Espaços alugáveis do sítio (lista para todos; criar/editar só admin)
+router.get('/espacos', espacos.listar.bind(espacos));
+router.post('/espacos', requireAdmin, espacos.criar.bind(espacos));
+router.put('/espacos/:id', requireAdmin, [id()], validate, espacos.alterar.bind(espacos));
 
 // Configurações e regras de mínimo (admin)
 router.get('/configuracoes', configs.listar.bind(configs));

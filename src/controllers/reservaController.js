@@ -1,13 +1,17 @@
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
 const { periodHasConflict, marcarConflitos } = require('../helpers/regras');
+const { resolverEspaco, responderErroEspaco } = require('../helpers/espacos');
 const { hojeBR } = require('../helpers/datas');
 
 const S = postgres.SCHEMA;
 const sel = (sql, replacements, transaction) => postgres.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
 
-// Mesmas colunas do MySQL do PHP (datas como texto 'YYYY-MM-DD'), para o painel reaproveitar os helpers dele
-const COLUNAS = `id, nome, email, telefone, checkin::text AS checkin, checkout::text AS checkout, hospedes, mensagem, status,
+// Mesmas colunas do MySQL do PHP (datas como texto 'YYYY-MM-DD'), para o painel reaproveitar os helpers dele,
+// + o espaço da reserva (subconsultas: as consultas usam tb_reservas sem alias)
+const ESPACO = (campo) => `(SELECT e.${campo} FROM ${S}.tb_espacos e WHERE e.id = tb_reservas.espaco_id)`;
+const COLUNAS = `id, espaco_id, ${ESPACO('nome')} AS espaco_nome, ${ESPACO('slug')} AS espaco_slug, ${ESPACO('tipo')} AS espaco_tipo,
+    nome, email, telefone, checkin::text AS checkin, checkout::text AS checkout, hospedes, mensagem, status,
     observacao_admin, pagamento_forma, pagamento_condicao, pagamento_parcelas, valor_total, entrada_paga,
     entrada_paga_em::text AS entrada_paga_em, saldo_pago, saldo_pago_em::text AS saldo_pago_em, aprovada_em, criado_em, atualizado_em`;
 const STATUS = ['pendente', 'aprovada', 'recusada', 'cancelada'];
@@ -21,11 +25,14 @@ const MSG_ACAO = {
 
 // Reservas do sítio do token (painel). Regras portadas de admin/reservas.php, index.php e agenda.php.
 class ReservaController {
-    // GET /api/painel/reservas?status=pendente,aprovada&q=&de=&ate=&checkout_apos=&ordem=checkin|criado&conflito=1&contagem=1
+    // GET /api/painel/reservas?espaco_id=&status=pendente,aprovada&q=&de=&ate=&checkout_apos=&ordem=checkin|criado&conflito=1&contagem=1
     async listar(req, res) {
         try {
             const where = ['sitio_id = :s'];
             const rep = { s: req.sitio_id };
+            // Filtro por espaço (a contagem das abas segue o mesmo filtro)
+            const espacoId = /^\d{1,9}$/.test(String(req.query.espaco_id || '')) ? Number(req.query.espaco_id) : null;
+            if (espacoId) { where.push('espaco_id = :e'); rep.e = espacoId; }
             const status = String(req.query.status || '').split(',').filter((x) => STATUS.includes(x));
             if (status.length) { where.push('status IN (:status)'); rep.status = status; }
 
@@ -49,7 +56,7 @@ class ReservaController {
             if (req.query.conflito === '1') await marcarConflitos(req.sitio_id, reservas);
             // Total de cada aba (Reservas): só quando pedido, para não pagar uma ida ao banco à toa
             const out = { reservas };
-            if (req.query.contagem === '1') out.contagem = await this._contagem(req.sitio_id);
+            if (req.query.contagem === '1') out.contagem = await this._contagem(req.sitio_id, espacoId);
             return res.status(200).json(out);
         } catch (error) {
             return this._erro(res, error, 'listar');
@@ -61,12 +68,13 @@ class ReservaController {
         try {
             const r = await this._reserva(req.sitio_id, req.params.id);
             if (!r) return res.status(404).json({ message: 'Pedido não encontrado.' });
+            // Conflito e pedidos concorrentes: só no mesmo espaço
             const [conflito, outros] = await Promise.all([
-                ['pendente', 'aprovada'].includes(r.status) && periodHasConflict(req.sitio_id, r.checkin, r.checkout, r.id),
+                ['pendente', 'aprovada'].includes(r.status) && periodHasConflict(req.sitio_id, r.espaco_id, r.checkin, r.checkout, r.id),
                 r.status !== 'pendente' ? [] : sel(
                 `SELECT id, nome FROM ${S}.tb_reservas
-                  WHERE sitio_id = :s AND status = 'pendente' AND id <> :id AND checkin < :co AND checkout > :ci ORDER BY id`,
-                { s: req.sitio_id, id: r.id, co: r.checkout, ci: r.checkin }),
+                  WHERE sitio_id = :s AND espaco_id = :e AND status = 'pendente' AND id <> :id AND checkin < :co AND checkout > :ci ORDER BY id`,
+                { s: req.sitio_id, e: r.espaco_id, id: r.id, co: r.checkout, ci: r.checkin }),
             ]);
             return res.status(200).json({ reserva: r, conflito: Boolean(conflito), outros_pendentes: outros });
         } catch (error) {
@@ -91,7 +99,7 @@ class ReservaController {
                 const r = await this._reserva(req.sitio_id, req.params.id, transaction, true);
                 if (!r) return { status: 404, json: { message: 'Pedido não encontrado.' } };
                 if (r.status !== de) return { status: 409, json: { message: 'Ação inválida para este pedido.' } };
-                if (acao === 'aprovar' && await periodHasConflict(req.sitio_id, r.checkin, r.checkout, r.id, transaction)) {
+                if (acao === 'aprovar' && await periodHasConflict(req.sitio_id, r.espaco_id, r.checkin, r.checkout, r.id, transaction)) {
                     return { status: 409, json: { message: 'Não foi possível aprovar: o período conflita com outra reserva aprovada ou com um bloqueio.' } };
                 }
                 await postgres.query(
@@ -105,6 +113,34 @@ class ReservaController {
             return res.status(resultado.status).json(resultado.json);
         } catch (error) {
             return this._erro(res, error, acao);
+        }
+    }
+
+    // PUT /api/painel/reservas/:id/espaco — { espaco_id } troca o espaço de um pedido pendente ou reserva aprovada.
+    // Aprovada só muda se o período estiver livre no espaço novo (mesma trava da aprovação).
+    async trocarEspaco(req, res) {
+        try {
+            const resultado = await postgres.transaction(async (transaction) => {
+                await sel('SELECT pg_advisory_xact_lock(:s)', { s: req.sitio_id }, transaction);
+                const r = await this._reserva(req.sitio_id, req.params.id, transaction, true);
+                if (!r) return { status: 404, json: { message: 'Pedido não encontrado.' } };
+                if (!['pendente', 'aprovada'].includes(r.status)) return { status: 409, json: { message: 'Só pedidos pendentes ou reservas aprovadas mudam de espaço.' } };
+                const { espaco, erro } = await resolverEspaco(req.sitio_id, req.body.espaco_id, {}, transaction);
+                if (erro) return { erro };
+                if (Number(espaco.id) === Number(r.espaco_id)) return { status: 200, json: { message: 'O pedido já está nesse espaço.', reserva: r } };
+                if (r.status === 'aprovada' && await periodHasConflict(req.sitio_id, espaco.id, r.checkin, r.checkout, r.id, transaction)) {
+                    return { status: 409, json: { message: `Não foi possível trocar: ${espaco.nome} já está ocupado nesse período.` } };
+                }
+                await postgres.query(
+                    `UPDATE ${S}.tb_reservas SET espaco_id = :e, atualizado_em = now() WHERE id = :id AND sitio_id = :s`,
+                    { replacements: { e: espaco.id, id: r.id, s: req.sitio_id }, type: QueryTypes.UPDATE, transaction }
+                );
+                return { status: 200, json: { message: `Pedido movido para ${espaco.nome}.`, reserva: await this._reserva(req.sitio_id, r.id, transaction) } };
+            });
+            if (resultado.erro) return responderErroEspaco(res, resultado.erro);
+            return res.status(resultado.status).json(resultado.json);
+        } catch (error) {
+            return this._erro(res, error, 'trocarEspaco');
         }
     }
 
@@ -194,9 +230,10 @@ class ReservaController {
         return r || null;
     }
 
-    async _contagem(sitioId) {
+    async _contagem(sitioId, espacoId = null) {
         const contagem = { pendente: 0, aprovada: 0, recusada: 0, cancelada: 0 };
-        (await sel(`SELECT status, count(*)::int AS n FROM ${S}.tb_reservas WHERE sitio_id = :s GROUP BY status`, { s: sitioId }))
+        (await sel(`SELECT status, count(*)::int AS n FROM ${S}.tb_reservas
+                     WHERE sitio_id = :s${espacoId ? ' AND espaco_id = :e' : ''} GROUP BY status`, { s: sitioId, e: espacoId }))
             .forEach((c) => { contagem[c.status] = c.n; });
         contagem.todas = Object.values(contagem).reduce((a, b) => a + b, 0);
         return contagem;

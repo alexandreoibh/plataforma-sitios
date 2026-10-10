@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { QueryTypes } = require('sequelize');
 const postgres = require('../database/postgres');
 const membros = require('../services/membros');
+const { espacosDoSitio } = require('../helpers/espacos');
 
 const S = postgres.SCHEMA;
 const sel = (sql, replacements) => postgres.query(sql, { replacements, type: QueryTypes.SELECT });
@@ -28,7 +29,9 @@ class PainelController {
                 else if (k !== 'pendentes') sitio[k] = v;
             });
             const n = r.pendentes;
-            return res.status(200).json({ usuario, sitio, perfil: req.perfil, pendentes: n });
+            // Espaços ativos: o painel só mostra seletores/colunas de espaço quando há mais de um
+            const espacos = await espacosDoSitio(req.sitio_id);
+            return res.status(200).json({ usuario, sitio, perfil: req.perfil, pendentes: n, espacos });
         } catch (error) {
             return this._erro(res, error, 'contexto');
         }

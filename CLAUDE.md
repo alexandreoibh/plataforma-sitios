@@ -44,9 +44,17 @@ Healthcheck: `GET /api/health`. Diagnóstico do banco (versão + tabelas): `GET 
 - Usuário em mais de um sítio: o admin de um sítio só altera nome/e-mail/senha de quem é **exclusivo** dele (`services/membros.js`); o resto a própria pessoa troca.
 - Rotas públicas (site) identificam o sítio pelo `slug`.
 
+## Espaços (unidades alugáveis)
+
+- Um sítio tem 1..N espaços (`tb_espacos`: o sítio em si, chalés, casas...). **Cada reserva, bloqueio e regra de mínimo é de um espaço** (`espaco_id` NOT NULL, FK composta `(espaco_id, sitio_id)` → `tb_espacos(id, sitio_id)`: o espaço é sempre do mesmo sítio).
+- Espaços são **independentes**: ocupação, conflito e mínimo de noites são calculados por espaço (`helpers/regras.js`). 1 espaço por reserva.
+- Compatibilidade (`helpers/espacos.js` → `resolverEspaco`): sem `espaco` informado, usa o único espaço ativo; com mais de um ativo, 422 `ESPACO_OBRIGATORIO`.
+- Mínimo de noites: regra do espaço → `tb_espacos.min_noites_padrao` → configuração `min_noites_padrao` do sítio → 1. Capacidade (hóspedes) é do espaço; `tb_sitios.min/max_hospedes` ficou como legado.
+- Espaço não se apaga (tem histórico): desativa. O sítio precisa de ao menos um ativo. Sítio novo nasce com o espaço principal (`garantirEspacoPrincipal`).
+
 ## Tabelas (schema "s-sitios")
 
-`tb_sitios`, `tb_usuarios` (e-mail único global, índice em `lower(email)`), `tb_membros`, `tb_reservas` (mesmas colunas do PHP + `sitio_id`; entrada/saldo como boolean + datas), `tb_bloqueios`, `tb_regras_minimo`, `tb_configuracoes` (sitio_id, chave, valor).
+`tb_sitios`, `tb_usuarios` (e-mail único global, índice em `lower(email)`), `tb_membros`, `tb_reservas` (mesmas colunas do PHP + `sitio_id`; entrada/saldo como boolean + datas), `tb_bloqueios`, `tb_regras_minimo`, `tb_configuracoes` (sitio_id, chave, valor), `tb_espacos` (slug único no sítio, nome, tipo sitio|chale|casa|suite|outro, descricao_curta, endereco/maps_query, min/max_hospedes, min_noites_padrao, ativo, ordem). `tb_reservas`, `tb_bloqueios` e `tb_regras_minimo` têm `espaco_id`.
 Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no PHP (`includes/finance.php` do front é a referência).
 
 ## Padrões (iguais ao e-Morador)
@@ -63,24 +71,26 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 |---|---|---|
 | `GET /api/health` | público | Healthcheck |
 | `GET /api/health/db` | `X-Cron-Queue-Key` | Versão do Postgres e tabelas do schema |
-| `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min); 404 se não estiver `ativo` |
-| `GET /api/public/sitios/:slug/disponibilidade` | público | `?inicio=YYYY-MM&meses=2` → `{ ocupadas, hoje, maxData, minPadrao, regras }` (mesmo formato do `api/disponibilidade.php` do front) |
-| `POST /api/public/sitios/:slug/reservas` | `X-Front-Key` (env `FRONT_KEY`) | Pedido do site (pendente), validações do `reservar.php`; 422 com `erros[]`; 429 após 5 pedidos pendentes do mesmo e-mail em 24h. O front envia os e-mails com o mailer dele |
+| `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min) + `espacos[]` ativos; 404 se não estiver `ativo` |
+| `GET /api/public/sitios/:slug/disponibilidade` | público | `?espaco=<slug>&inicio=YYYY-MM&meses=2` → `{ espaco, ocupadas, hoje, maxData, minPadrao, regras }` do espaço (mesmo formato do `api/disponibilidade.php` do front) |
+| `POST /api/public/sitios/:slug/reservas` | `X-Front-Key` (env `FRONT_KEY`) | Pedido do site (pendente) para o `espaco` (slug), validações do `reservar.php` (hóspedes pela capacidade do espaço); 422 com `erros[]`; 429 após 5 pedidos pendentes do mesmo e-mail em 24h. O front envia os e-mails com o mailer dele |
 | `POST /api/auth/login` | público | `{ email, senha }` → `{ token, usuario, sitios, sitio }`. Com um sítio só, o token já vem nele (`sitio_id`, `perfil`); com vários (ou super-admin), `sitio` = null |
 | `POST /api/auth/sitio` | `auth` | `{ sitio_id }` → token novo no sítio escolhido |
 | `POST /api/auth/senha/esqueci\|validar\|redefinir` | `X-Front-Key` | Esqueci minha senha: `esqueci {email, slug}` gera o token (só para quem tem acesso ao sítio; 1h; não repete em 2 min) e devolve `{nome, email, token, configuracoes}` para o painel enviar o e-mail; `validar {token}`; `redefinir {token, senha}` |
 | `GET/POST /api/admin/sitios`, `GET/PUT /api/admin/sitios/:id` | `auth` + `requireSuperAdmin` | Cadastro de sítios (tela `admin/sitios.php` do painel PHP) |
 | `GET/POST /api/admin/sitios/:id/membros`, `PUT/DELETE /api/admin/sitios/:id/membros/:usuarioId` | `auth` + `requireSuperAdmin` | Usuários do sítio (vínculo `tb_membros`). POST com e-mail novo cria o usuário (nome + senha). DELETE remove só o vínculo; nunca deixa o sítio sem admin (409) |
-| `GET /api/painel/contexto` | painel | Usuário, identidade do sítio ativo, perfil e nº de pendentes |
+| `GET /api/painel/contexto` | painel | Usuário, identidade do sítio ativo, perfil, nº de pendentes e `espacos[]` ativos |
 | `PUT /api/painel/perfil`, `PUT /api/painel/perfil/senha` | painel | Meus dados |
-| `GET /api/painel/reservas` | painel | `?status=a,b&q=&de=&ate=&checkout_apos=&ordem=checkin\|checkin_desc&conflito=1&contagem=1` → `{ reservas, contagem? }` (conflitos calculados em lote) |
+| `GET /api/painel/reservas` | painel | `?espaco_id=&status=a,b&q=&de=&ate=&checkout_apos=&ordem=checkin\|checkin_desc&conflito=1&contagem=1` → `{ reservas, contagem? }` (conflitos calculados em lote) |
 | `GET /api/painel/reservas/:id` | painel | `{ reserva, conflito, outros_pendentes }` |
 | `POST /api/painel/reservas/:id/aprovar\|recusar\|cancelar` | painel | Transição de status (aprovar exige pagamento e trava o sítio) |
+| `PUT /api/painel/reservas/:id/espaco` | painel | `{ espaco_id }` troca o espaço (pendente/aprovada; aprovada só se o período estiver livre no espaço novo) |
 | `PUT /api/painel/reservas/:id/pagamento` | painel | Pagamento de reserva aprovada |
 | `POST /api/painel/reservas/:id/recebimento` | painel + admin | `{ tipo: entrada\|saldo, data? }` (financeiro) |
-| `GET/POST /api/painel/bloqueios`, `DELETE /api/painel/bloqueios/:id` | painel | `?passados=1` ou `?de=&ate=`; cada item traz `reservas_no_periodo` |
+| `GET/POST /api/painel/bloqueios`, `DELETE /api/painel/bloqueios/:id` | painel | `?espaco_id=` + `?passados=1` ou `?de=&ate=`; cada item traz o espaço e `reservas_no_periodo` (mesmo espaço). POST `{ espaco_ids[], data_inicio, data_fim, motivo? }` cria um bloqueio por espaço |
 | `GET /api/painel/configuracoes`, `PUT …/configuracoes/gerais\|email` | painel (PUT: admin) | Chaves com os padrões do PHP; e-mail confere o DNS do remetente |
-| `GET/POST /api/painel/regras-minimo`, `DELETE …/:id` | painel (escrita: admin) | Mínimo de noites por período |
+| `GET/POST /api/painel/regras-minimo`, `DELETE …/:id` | painel (escrita: admin) | Mínimo de noites por período e espaço (POST `{ espaco_ids[], ... }` cria uma regra por espaço) |
+| `GET /api/painel/espacos`, `POST …/espacos`, `PUT …/espacos/:id` | painel (escrita: admin) | Espaços do sítio (lista traz inativos e `reservas_futuras`); sem DELETE |
 | `GET/POST /api/painel/usuarios`, `PUT/DELETE …/:usuarioId`, `POST …/:usuarioId/senha` | painel + admin | Usuários do sítio (`services/membros.js`) |
 
 "painel" = `auth` + `requireSitio`. Consumidor: `C:\xampp8\painel-sitios` (painel PHP único). O banco é remoto (~250 ms por consulta): junte consultas e calcule em lote. O painel recebe as reservas com as mesmas colunas do MySQL do PHP; os recebíveis do financeiro continuam calculados pelo painel (`includes/finance.php`).
