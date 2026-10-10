@@ -3,7 +3,10 @@
 // Espaços alugáveis de um sítio (o sítio em si, chalés, casas...). Cada reserva, bloqueio e regra de mínimo
 // passa a pertencer a um espaço; espaços são independentes (ocupar um não afeta os outros).
 // Os dados existentes vão para um espaço "principal" (slug 'sitio') criado para cada sítio.
+// FASE 1 (só aditiva): espaco_id entra NULL para a API antiga continuar gravando até a nova ser publicada;
+// a 20261010000002 preenche o que faltar e aplica o NOT NULL depois do deploy.
 // Compatível com PostgreSQL 9.2: sem ON CONFLICT nem CREATE INDEX IF NOT EXISTS (guardas com DO $$).
+// Nunca apaga nada: o down não desfaz (desfazer é manual, a partir do backup).
 const { SCHEMA } = require('../postgres');
 
 const NS = SCHEMA.replace(/"/g, '');
@@ -22,7 +25,7 @@ module.exports = {
     await q(`
       CREATE TABLE IF NOT EXISTS ${SCHEMA}.tb_espacos (
         id                SERIAL PRIMARY KEY,
-        sitio_id          INTEGER      NOT NULL REFERENCES ${SCHEMA}.tb_sitios (id) ON DELETE CASCADE,
+        sitio_id          INTEGER      NOT NULL REFERENCES ${SCHEMA}.tb_sitios (id),
         slug              VARCHAR(60)  NOT NULL,
         nome              VARCHAR(120) NOT NULL,
         tipo              VARCHAR(20)  NOT NULL DEFAULT 'sitio' CHECK (tipo IN ('sitio', 'chale', 'casa', 'suite', 'outro')),
@@ -67,8 +70,7 @@ module.exports = {
           SELECT e.id FROM ${SCHEMA}.tb_espacos e WHERE e.sitio_id = x.sitio_id ORDER BY e.ordem, e.id LIMIT 1
         ) WHERE x.espaco_id IS NULL;
       `);
-      await q(`ALTER TABLE ${SCHEMA}.${t} ALTER COLUMN espaco_id SET NOT NULL`);
-      // FK composta: o espaço tem de ser do mesmo sítio do registro
+      // FK composta: o espaço tem de ser do mesmo sítio do registro (aceita NULL até a fase 2)
       await q(`
         DO $$
         BEGIN
@@ -96,13 +98,7 @@ module.exports = {
     }
   },
 
-  async down(queryInterface) {
-    const q = (sql) => queryInterface.sequelize.query(sql);
-    for (const t of TABELAS) {
-      await q(`ALTER TABLE ${SCHEMA}.${t} DROP CONSTRAINT IF EXISTS fk_${t}_espaco`);
-      await q(`DROP INDEX IF EXISTS ${SCHEMA}.${INDICES[t][0]}`);
-      await q(`ALTER TABLE ${SCHEMA}.${t} DROP COLUMN IF EXISTS espaco_id`);
-    }
-    await q(`DROP TABLE IF EXISTS ${SCHEMA}.tb_espacos`);
+  async down() {
+    throw new Error('Migração de espaços não se desfaz automaticamente (não apagamos tabelas/colunas). Desfaça manualmente a partir do backup.');
   }
 };
