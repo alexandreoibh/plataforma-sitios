@@ -27,6 +27,13 @@ async function buscar(sitioId, usuarioId, transaction) {
     return m || null;
 }
 
+// E-mails da equipe (vínculo e usuário ativos), separados por vírgula: vão em cópia (Cc) nos e-mails do sítio.
+// Subquery para entrar em outra consulta sem custar mais uma ida ao banco; `sitioExpr` = coluna/parâmetro do sítio.
+const sqlEquipe = (sitioExpr) => `(SELECT string_agg(DISTINCT lower(eu.email), ',')
+    FROM ${S}.tb_membros em JOIN ${S}.tb_usuarios eu ON eu.id = em.usuario_id
+   WHERE em.sitio_id = ${sitioExpr} AND em.ativo AND eu.ativo)`;
+const listaEquipe = (csv) => (csv ? String(csv).split(',') : []);
+
 // Admins ativos do sítio sem contar `exceto`
 async function outrosAdmins(sitioId, exceto, transaction) {
     const [r] = await sel(
@@ -130,4 +137,4 @@ async function redefinirSenha(sitioId, usuarioId) {
     return { status: 200, json: { message: `Nova senha de ${m.nome}: ${senha} (repasse e peça para trocar em Meus dados).`, senha } };
 }
 
-module.exports = { listar, buscar, adicionar, alterar, remover, redefinirSenha };
+module.exports = { listar, buscar, adicionar, alterar, remover, redefinirSenha, sqlEquipe, listaEquipe };

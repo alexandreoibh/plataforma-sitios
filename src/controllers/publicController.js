@@ -3,6 +3,7 @@ const postgres = require('../database/postgres');
 const { occupiedNights, minPadraoEspaco, maxBookingDate, validatePeriod } = require('../helpers/regras');
 const { espacosDoSitio, resolverEspaco, responderErroEspaco } = require('../helpers/espacos');
 const { addMonths, hojeBR } = require('../helpers/datas');
+const membros = require('../services/membros');
 
 const S = postgres.SCHEMA;
 const sel = (sql, replacements, transaction) => postgres.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
@@ -111,12 +112,14 @@ class PublicController {
             // Mesmos campos de espaço que o painel recebe (e-mails mostram "Espaço")
             Object.assign(nova, { espaco_nome: espaco.nome, espaco_slug: espaco.slug, espaco_tipo: espaco.tipo });
             // O site manda os e-mails de "pedido recebido" (cliente e dono) com o mailer dele: precisa do remetente
-            // e do destino configurados no sítio (rota só para os fronts, X-Front-Key)
-            const configs = await sel(
-                `SELECT chave, valor FROM ${S}.tb_configuracoes
-                  WHERE sitio_id = :s AND chave IN ('email_remetente', 'email_notificacao', 'site_url')`, { s: sitio.id });
+            // e do destino configurados no sítio (rota só para os fronts, X-Front-Key), e da equipe, que vai em cópia
+            const [configs, [eq]] = await Promise.all([
+                sel(`SELECT chave, valor FROM ${S}.tb_configuracoes
+                      WHERE sitio_id = :s AND chave IN ('email_remetente', 'email_notificacao', 'site_url')`, { s: sitio.id }),
+                sel(`SELECT ${membros.sqlEquipe(':s')} AS equipe`, { s: sitio.id }),
+            ]);
             const configuracoes = Object.fromEntries(configs.map((c) => [c.chave, c.valor]));
-            return res.status(201).json({ reserva: nova, configuracoes });
+            return res.status(201).json({ reserva: nova, configuracoes, equipe_emails: membros.listaEquipe(eq.equipe) });
         } catch (error) {
             console.error('[public.criarReserva]', error.message);
             return res.status(500).json({ message: 'Não foi possível registrar o pedido agora. Tente de novo ou fale pelo WhatsApp.' });

@@ -19,19 +19,21 @@ class PainelController {
                         u.ultimo_acesso AS u_ultimo_acesso,
                         s.id, s.slug, s.nome, s.slogan, s.telefone, s.whatsapp, s.email_contato, s.endereco, s.maps_query,
                         s.instagram, s.facebook, s.dominios, s.min_hospedes, s.max_hospedes, s.status,
-                        (SELECT count(*)::int FROM ${S}.tb_reservas x WHERE x.sitio_id = s.id AND x.status = 'pendente') AS pendentes
+                        (SELECT count(*)::int FROM ${S}.tb_reservas x WHERE x.sitio_id = s.id AND x.status = 'pendente') AS pendentes,
+                        ${membros.sqlEquipe('s.id')} AS equipe
                    FROM ${S}.tb_sitios s, ${S}.tb_usuarios u WHERE s.id = :s AND u.id = :u`,
                 { s: req.sitio_id, u: req.idusuario });
             const usuario = {};
             const sitio = {};
             Object.entries(r).forEach(([k, v]) => {
                 if (k.startsWith('u_')) usuario[k.slice(2)] = v;
-                else if (k !== 'pendentes') sitio[k] = v;
+                else if (k !== 'pendentes' && k !== 'equipe') sitio[k] = v;
             });
             const n = r.pendentes;
             // Espaços ativos: o painel só mostra seletores/colunas de espaço quando há mais de um
             const espacos = await espacosDoSitio(req.sitio_id);
-            return res.status(200).json({ usuario, sitio, perfil: req.perfil, pendentes: n, espacos });
+            // equipe_emails: todos os vinculados ao sítio vão em cópia nos e-mails que o painel envia
+            return res.status(200).json({ usuario, sitio, perfil: req.perfil, pendentes: n, espacos, equipe_emails: membros.listaEquipe(r.equipe) });
         } catch (error) {
             return this._erro(res, error, 'contexto');
         }
