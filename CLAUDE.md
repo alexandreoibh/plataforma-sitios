@@ -62,7 +62,8 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 - Rotas: `router.post('/x', auth, [validações express-validator], validate, controller.metodo.bind(controller))`.
 - Controllers são classes; auxiliares privados começam com `_`.
 - Efeitos colaterais (e-mail) via `waitUntil` de `@vercel/functions` depois da resposta.
-- Cron: a Vercel não roda `node-cron`; tarefas são rotas protegidas por `cronQueueKeyGuard` (header `X-Cron-Queue-Key`) chamadas por um agendador externo.
+- Cron: a Vercel não roda `node-cron`; tarefas são rotas `GET /api/cron/*` protegidas por `cronQueueKeyGuard`, agendadas no `crons` do `vercel.json` (Vercel Cron manda `Authorization: Bearer <CRON_SECRET>`; horário em UTC) ou chamadas à mão com `X-Cron-Queue-Key`.
+- E-mail de rotina (ex.: lembrete de pendentes) sai pela hospedagem de cada site: a API faz `POST <site_url>/admin/<tela>.php` com `X-Front-Key` e os dados; o painel PHP monta e envia com o mailer dele (a `mail()` só aceita remetente do domínio daquele servidor).
 - E-mails: enviados por um endpoint PHP (`EMAIL_DISPATCH_URL` + `PUBLIC_EMAIL_DISPATCH_KEY`), como no e-Morador.
 
 ## Rotas
@@ -71,6 +72,7 @@ Recebíveis do financeiro são **calculados** a partir de `tb_reservas`, como no
 |---|---|---|
 | `GET /api/health` | público | Healthcheck |
 | `GET /api/health/db` | `X-Cron-Queue-Key` | Versão do Postgres e tabelas do schema |
+| `GET /api/cron/lembrete-pendentes` | Vercel Cron (`CRON_SECRET`) ou `X-Cron-Queue-Key` | Diário às 11h UTC (8h BR). Sítios ativos com pedido pendente há > 24h → `POST <site_url>/admin/lembrete-pendentes.php` (`{ slug, pendentes[] com conflito, espacos, equipe_emails, configuracoes }`); o site manda o e-mail para `email_notificacao` com a equipe em Cc. Grava `tb_configuracoes.lembrete_pendentes_em` = hoje (não repete no dia). `?sitio=<slug>`, `?forcar=1` para teste |
 | `GET /api/public/sitios/:slug` | público | Identidade do sítio para o front (cache 5 min) + `espacos[]` ativos; 404 se não estiver `ativo` |
 | `GET /api/public/sitios/:slug/disponibilidade` | público | `?espaco=<slug>&inicio=YYYY-MM&meses=2` → `{ espaco, ocupadas, hoje, maxData, minPadrao, regras }` do espaço (mesmo formato do `api/disponibilidade.php` do front) |
 | `POST /api/public/sitios/:slug/reservas` | `X-Front-Key` (env `FRONT_KEY`) | Pedido do site (pendente) para o `espaco` (slug), validações do `reservar.php` (hóspedes pela capacidade do espaço); 422 com `erros[]`; 429 após 5 pedidos pendentes do mesmo e-mail em 24h. O front envia os e-mails com o mailer dele (resposta traz `configuracoes` e `equipe_emails[]`, que vão em Cc) |

@@ -1,18 +1,20 @@
 const crypto = require('crypto');
 
-// Guarda das rotas chamadas por cron externo ou de diagnóstico: header X-Cron-Queue-Key
-// comparado em tempo constante com CRON_QUEUE_KEY (o node-cron não roda na Vercel).
-module.exports = (req, res, next) => {
-    const expectedKey = process.env.CRON_QUEUE_KEY;
-    const providedKey = req.header('X-Cron-Queue-Key');
+// Guarda das rotas chamadas por cron ou de diagnóstico (o node-cron não roda na Vercel). Aceita:
+// - Vercel Cron: `Authorization: Bearer <CRON_SECRET>` (a Vercel manda sozinha quando CRON_SECRET está no ambiente);
+// - chamada manual/agendador externo: header X-Cron-Queue-Key = CRON_QUEUE_KEY.
+// Comparação em tempo constante; sem a variável configurada, aquele caminho fica fechado.
+const confere = (esperada, recebida) => {
+    if (!esperada || !recebida) return false;
+    const a = Buffer.from(String(esperada));
+    const b = Buffer.from(String(recebida));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
 
-    if (!expectedKey || !providedKey) {
-        return res.status(401).json({ message: 'Não autorizado.' });
+module.exports = (req, res, next) => {
+    const bearer = String(req.header('Authorization') || '').replace(/^Bearer\s+/i, '');
+    if (confere(process.env.CRON_QUEUE_KEY, req.header('X-Cron-Queue-Key')) || confere(process.env.CRON_SECRET, bearer)) {
+        return next();
     }
-    const expected = Buffer.from(String(expectedKey));
-    const provided = Buffer.from(String(providedKey));
-    if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
-        return res.status(401).json({ message: 'Não autorizado.' });
-    }
-    return next();
+    return res.status(401).json({ message: 'Não autorizado.' });
 };
