@@ -17,4 +17,7 @@ router.get('/sitios/:slug/disponibilidade', [slug], validate, controller.disponi
 // POST /api/public/sitios/:slug/reservas — pedido de reserva. Grava sem login: só os fronts PHP (X-Front-Key)
 router.post('/sitios/:slug/reservas', frontKeyGuard, [slug], validate, controller.criarReserva.bind(controller));
 
+// POST /api/public/sitios/:slug/contato — formulário de contato: valida e devolve a equipe (o site envia o e-mail)
+router.post('/sitios/:slug/contato', frontKeyGuard, [slug], validate, controller.contato.bind(controller));
+
 module.exports = router;

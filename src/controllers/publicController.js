@@ -111,19 +111,52 @@ class PublicController {
                 { s: sitio.id, e: espaco.id, ...f, mensagem: f.mensagem || null });
             // Mesmos campos de espaço que o painel recebe (e-mails mostram "Espaço")
             Object.assign(nova, { espaco_nome: espaco.nome, espaco_slug: espaco.slug, espaco_tipo: espaco.tipo });
-            // O site manda os e-mails de "pedido recebido" (cliente e dono) com o mailer dele: precisa do remetente
-            // e do destino configurados no sítio (rota só para os fronts, X-Front-Key), e da equipe, que vai em cópia
-            const [configs, [eq]] = await Promise.all([
-                sel(`SELECT chave, valor FROM ${S}.tb_configuracoes
-                      WHERE sitio_id = :s AND chave IN ('email_remetente', 'email_notificacao', 'site_url')`, { s: sitio.id }),
-                sel(`SELECT ${membros.sqlEquipe(':s')} AS equipe`, { s: sitio.id }),
-            ]);
-            const configuracoes = Object.fromEntries(configs.map((c) => [c.chave, c.valor]));
-            return res.status(201).json({ reserva: nova, configuracoes, equipe_emails: membros.listaEquipe(eq.equipe) });
+            // O site manda os e-mails de "pedido recebido" (cliente e dono) com o mailer dele
+            return res.status(201).json({ reserva: nova, ...await this._avisos(sitio.id) });
         } catch (error) {
             console.error('[public.criarReserva]', error.message);
             return res.status(500).json({ message: 'Não foi possível registrar o pedido agora. Tente de novo ou fale pelo WhatsApp.' });
         }
+    }
+
+    // POST /api/public/sitios/:slug/contato — mensagem do formulário de contato. Exige X-Front-Key (só os fronts PHP).
+    // Não grava nada: valida e devolve remetente/destino e a equipe; o site envia o e-mail com o mailer dele.
+    async contato(req, res) {
+        try {
+            const sitio = await this._sitio(req.params.slug);
+            if (!sitio) return res.status(404).json({ message: 'Sítio não encontrado.' });
+            const b = req.body;
+            const f = {
+                nome: String(b.nome || '').trim(),
+                email: String(b.email || '').trim(),
+                telefone: String(b.telefone || '').trim(),
+                assunto: String(b.assunto || '').trim(),
+                mensagem: String(b.mensagem || '').trim(),
+            };
+            const erros = [];
+            if ([...f.nome].length < 3 || [...f.nome].length > 100) erros.push('Informe seu nome completo.');
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email) || f.email.length > 150) erros.push('Informe um e-mail válido.');
+            const digitos = f.telefone.replace(/\D/g, '');
+            if (f.telefone && (digitos.length < 10 || digitos.length > 13 || f.telefone.length > 30)) erros.push('Informe o telefone com DDD.');
+            if (!f.assunto || [...f.assunto].length > 150) erros.push('Informe o assunto (até 150 caracteres).');
+            if (!f.mensagem || [...f.mensagem].length > 2000) erros.push('Escreva sua mensagem (até 2000 caracteres).');
+            if (erros.length) return res.status(422).json({ message: erros[0], erros });
+            return res.status(200).json(await this._avisos(sitio.id));
+        } catch (error) {
+            console.error('[public.contato]', error.message);
+            return res.status(500).json({ message: 'Não foi possível enviar a mensagem agora. Tente de novo ou fale pelo WhatsApp.' });
+        }
+    }
+
+    // Remetente, destino e endereço do site configurados no sítio + e-mails da equipe (vão em cópia): os fronts mandam
+    // os e-mails pela hospedagem deles. Só em rotas com X-Front-Key.
+    async _avisos(sitioId) {
+        const [configs, [eq]] = await Promise.all([
+            sel(`SELECT chave, valor FROM ${S}.tb_configuracoes
+                  WHERE sitio_id = :s AND chave IN ('email_remetente', 'email_notificacao', 'site_url')`, { s: sitioId }),
+            sel(`SELECT ${membros.sqlEquipe(':s')} AS equipe`, { s: sitioId }),
+        ]);
+        return { configuracoes: Object.fromEntries(configs.map((c) => [c.chave, c.valor])), equipe_emails: membros.listaEquipe(eq.equipe) };
     }
 
     // Só sítios ativos aparecem para o público
